@@ -22,7 +22,7 @@ mod state;
 use clip::{ClipEngine, ClipEvent};
 use grid::ThumbnailGrid;
 use state::{
-    parse_bindings, FullPendingState, Mode, Model, SearchState, ThumbRequestQueue, ThumbnailEntry,
+    parse_bindings, FullPendingState, Mode, Model, ThumbRequestQueue, ThumbnailEntry,
     ThumbnailTexture, ThumbnailUpdate, Tile, TiledTexture,
 };
 
@@ -127,7 +127,7 @@ fn mouse_wheel(app: &App, model: &mut Model, delta: MouseScrollDelta, _phase: To
                 MouseScrollDelta::LineDelta(_x, y) => 1.0 + y * 0.2,
                 MouseScrollDelta::PixelDelta(pos) => 1.0 + pos.y as f32 * 0.002,
             };
-            let new_zoom = (old_zoom * zoom_factor).clamp(0.01, 10.0);
+            let new_zoom = (old_zoom * zoom_factor).clamp(0.01, 100.0);
             // Adjust pan so the point under cursor stays fixed
             model.pan = mouse_pos + (model.pan - mouse_pos) * (new_zoom / old_zoom);
             model.zoom = new_zoom;
@@ -592,6 +592,10 @@ fn model(app: &App) -> Model {
         prev_window_rect: initial_rect,
         prev_scroll: 0.0,
         fit_mode: false,
+        rotate_deg: 0.0,
+        flip_h: false,
+        flip_v: false,
+        show_info_bar: false,
         selection_changed_at: Instant::now(),
         selection_pending: false,
         // Custom key bindings
@@ -672,29 +676,6 @@ fn ensure_thumbnail_visible(app: &App, model: &mut Model, idx: usize) {
             scroll = bottom - view_height;
         }
         model.scroll_offset = scroll.clamp(0.0, grid.max_scroll());
-    }
-}
-
-fn advance_search(app: &App, model: &mut Model, delta: isize) {
-    let mut target = None;
-    if let Some(search) = model.search.as_mut() {
-        if search.results.is_empty() {
-            return;
-        }
-        let len = search.results.len() as isize;
-        let mut idx = search.current as isize + delta;
-        if len == 0 {
-            return;
-        }
-        idx = ((idx % len) + len) % len;
-        search.current = idx as usize;
-        target = search
-            .results
-            .get(search.current)
-            .map(|(image_idx, _)| *image_idx);
-    }
-    if let Some(idx) = target {
-        focus_image(app, model, idx);
     }
 }
 
@@ -790,145 +771,6 @@ fn update_search_with_image_embedding(app: &App, model: &mut Model, index: usize
     }
 }
 
-fn handle_search_key(app: &App, model: &mut Model, key: Key) -> bool {
-    let mods = app.keys.mods;
-    if mods.ctrl() || mods.alt() || mods.logo() {
-        return false;
-    }
-
-    if key == Key::Slash {
-        if let Some(search) = model.search.as_mut() {
-            if search.focused {
-                return false;
-            }
-            search.focused = true;
-            search.skip_next_char = true;
-        } else {
-            model.search = Some(SearchState {
-                input: String::new(),
-                focused: true,
-                skip_next_char: true,
-                results: Vec::new(),
-                current: 0,
-                pending_request: None,
-                error: None,
-                last_embedding: None,
-            });
-        }
-        return true;
-    }
-
-    if let Some(true) = model.search.as_ref().map(|s| s.focused) {
-        match key {
-            Key::Escape => {
-                model.search = None;
-                return true;
-            }
-            Key::Return => {
-                let query_opt = model.search.as_ref().and_then(|s| {
-                    let trimmed = s.input.trim();
-                    if trimmed.is_empty() {
-                        None
-                    } else {
-                        Some(trimmed.to_string())
-                    }
-                });
-                if let Some(query) = query_opt {
-                    if let Some(search) = model.search.as_mut() {
-                        search.pending_request = None;
-                        search.error = None;
-                        search.last_embedding = None;
-                        search.results.clear();
-                        search.current = 0;
-                        search.skip_next_char = false;
-                    }
-                    let request_id = model.next_search_request_id;
-                    model.next_search_request_id = model.next_search_request_id.wrapping_add(1);
-                    match model.clip_engine.request_text(request_id, query) {
-                        Ok(()) => {
-                            if let Some(search) = model.search.as_mut() {
-                                search.pending_request = Some(request_id);
-                                search.focused = false;
-                                search.skip_next_char = false;
-                            }
-                        }
-                        Err(err) => {
-                            if let Some(search) = model.search.as_mut() {
-                                search.error = Some(format!("Failed to queue search: {err}"));
-                                search.focused = false;
-                                search.skip_next_char = false;
-                            }
-                        }
-                    }
-                } else if let Some(search) = model.search.as_mut() {
-                    search.error = Some("Enter a search phrase".to_string());
-                }
-                return true;
-            }
-            Key::Back => {
-                let mut remove_search = false;
-                if let Some(search) = model.search.as_mut() {
-                    if search.input.is_empty() {
-                        remove_search = true;
-                    } else {
-                        search.input.pop();
-                        search.pending_request = None;
-                        search.error = None;
-                        search.last_embedding = None;
-                        search.results.clear();
-                        search.current = 0;
-                        search.skip_next_char = false;
-                    }
-                }
-                if remove_search {
-                    model.search = None;
-                }
-                return true;
-            }
-            _ => {
-                return true;
-            }
-        }
-    }
-
-    if let Some(false) = model.search.as_ref().map(|s| s.focused) {
-        match key {
-            Key::Escape => {
-                model.search = None;
-                return true;
-            }
-            Key::N => {
-                if matches!(model.mode, Mode::Thumbnails)
-                    && model
-                        .search
-                        .as_ref()
-                        .map(|s| !s.results.is_empty())
-                        .unwrap_or(false)
-                {
-                    let delta = if mods.shift() { -1 } else { 1 };
-                    advance_search(app, model, delta);
-                    return true;
-                }
-            }
-            Key::P => {
-                if matches!(model.mode, Mode::Thumbnails)
-                    && model
-                        .search
-                        .as_ref()
-                        .map(|s| !s.results.is_empty())
-                        .unwrap_or(false)
-                {
-                    let delta = if mods.shift() { 1 } else { -1 };
-                    advance_search(app, model, delta);
-                    return true;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    false
-}
 /// Directions for arrow key navigation.
 enum ArrowDirection {
     Left,
@@ -1054,6 +896,21 @@ fn received_character(_app: &App, model: &mut Model, ch: char) {
     if ch.is_control() {
         return;
     }
+    match ch {
+        '<' => {
+            if let Mode::Single = model.mode {
+                model.rotate_deg -= 90.0;
+            }
+            return; // stop so it doesn't go into search handling
+        }
+        '>' => {
+            if let Mode::Single = model.mode {
+                model.rotate_deg += 90.0;
+            }
+            return;
+        }
+        _ => {}
+    }
     if let Some(search) = model.search.as_mut() {
         if search.focused {
             if search.skip_next_char {
@@ -1071,10 +928,32 @@ fn received_character(_app: &App, model: &mut Model, ch: char) {
 }
 
 fn key_pressed(app: &App, model: &mut Model, key: Key) {
-    if handle_search_key(app, model, key) {
+    let len = model.image_paths.len();
+    if app.keys.mods.ctrl() && key == Key::S {
+        model.show_info_bar = !model.show_info_bar;
         return;
     }
-    let len = model.image_paths.len();
+    if app.keys.mods.shift() && key == Key::W {
+        if let Mode::Single = model.mode {
+            apply_fit(app, model);
+        }
+        return;
+    }
+    // Shift+H: flip horizontally
+    if app.keys.mods.shift() && key == Key::H {
+        if let Mode::Single = model.mode {
+            model.flip_h = !model.flip_h;
+        }
+        return;
+    }
+
+    // Shift+V: flip vertically
+    if app.keys.mods.shift() && key == Key::V {
+        if let Mode::Single = model.mode {
+            model.flip_v = !model.flip_v;
+        }
+        return;
+    }
     if app.keys.mods == ModifiersState::empty() {
         match key {
             // Quit on 'q'
@@ -1193,11 +1072,27 @@ fn key_pressed(app: &App, model: &mut Model, key: Key) {
                     window.set_fullscreen(!is_fs);
                 }
             }
+            Key::Minus => {
+                // Zoom OUT
+                if let Mode::Single = model.mode {
+                    let old_zoom = model.zoom;
+                    let new_zoom = (old_zoom * 0.9).clamp(0.01, 100.0);
+
+                    // Zoom around center of screen (0,0)
+                    model.pan = model.pan * (new_zoom / old_zoom);
+                    model.zoom = new_zoom;
+                }
+            }
             // Show at 100% scale
             Key::Equals => {
+                // Zoom IN
                 if let Mode::Single = model.mode {
-                    model.zoom = 1.0;
-                    model.pan = vec2(0.0, 0.0);
+                    let old_zoom = model.zoom;
+                    let new_zoom = (old_zoom * 1.1).clamp(0.01, 100.0);
+
+                    // Zoom around center of screen (0,0)
+                    model.pan = model.pan * (new_zoom / old_zoom);
+                    model.zoom = new_zoom;
                 }
             }
             // Clear command output display
@@ -1641,7 +1536,7 @@ fn apply_fit(app: &App, model: &mut Model) {
 
 fn view(app: &App, model: &Model, frame: Frame) {
     let draw = app.draw();
-    draw.background().color(BLACK);
+    draw.background().color(srgba(0.141, 0.141, 0.141, 1.0));
 
     let Some(rect) = current_window_rect(app, model) else {
         return;
@@ -1703,7 +1598,7 @@ fn view(app: &App, model: &Model, frame: Frame) {
                                     .font_size(12)
                                     .w_h(icon_w, icon_h)
                                     .x_y(icon_center_x, icon_center_y - 1.0)
-                                    .color(WHITE);
+                                    .color(srgba(0.922, 0.859, 0.698, 1.0));
                             }
                             if i == model.current {
                                 draw.rect()
@@ -1732,29 +1627,31 @@ fn view(app: &App, model: &Model, frame: Frame) {
                     }
                 }
             }
-            // Bottom info bar in thumbnail mode: filename and index/total
-            let bar_h = 20.0;
-            let bar_y = -rect.h() / 2.0 + bar_h / 2.0;
-            // Background
-            draw.rect()
-                .x_y(0.0, bar_y)
-                .w_h(rect.w(), bar_h)
-                .color(srgba(0.0, 0.0, 0.0, 0.5));
-            let full_path = model.image_paths[model.current].to_string_lossy();
-            draw.text(&full_path)
-                .font_size(14)
-                .w_h(rect.w(), bar_h)
-                .x_y(0.0, bar_y)
-                .left_justify()
-                .color(WHITE);
-            // Index of selected image
-            let count = format!("{}/{}", model.current + 1, model.image_paths.len());
-            draw.text(&count)
-                .font_size(14)
-                .w_h(rect.w(), bar_h)
-                .x_y(0.0, bar_y)
-                .right_justify()
-                .color(WHITE);
+            if model.show_info_bar {
+                // Bottom info bar in thumbnail mode: filename and index/total
+                let bar_h = 20.0;
+                let bar_y = -rect.h() / 2.0 + bar_h / 2.0;
+                // Background
+                draw.rect()
+                    .x_y(0.0, bar_y)
+                    .w_h(rect.w(), bar_h)
+                    .color(srgba(0.141, 0.141, 0.141, 1.0));
+                let full_path = model.image_paths[model.current].to_string_lossy();
+                draw.text(&full_path)
+                    .font_size(14)
+                    .w_h(rect.w(), bar_h)
+                    .x_y(0.0, bar_y)
+                    .left_justify()
+                    .color(srgba(0.922, 0.859, 0.698, 1.0));
+                // Index of selected image
+                let count = format!("{}/{}", model.current + 1, model.image_paths.len());
+                draw.text(&count)
+                    .font_size(14)
+                    .w_h(rect.w(), bar_h)
+                    .x_y(0.0, bar_y)
+                    .right_justify()
+                    .color(srgba(0.922, 0.859, 0.698, 1.0));
+            }
         }
         Mode::Single => {
             // Attempt to draw the full-resolution tiled texture if loaded;
@@ -1810,61 +1707,69 @@ fn view(app: &App, model: &Model, frame: Frame) {
                         *tile.texture.borrow_mut() = Some(n_texture);
                     }
                     let n_texture = tile.texture.borrow().as_ref().unwrap().clone();
+                    let mut w = tile.width as f32 * model.zoom;
+                    let mut h = tile.height as f32 * model.zoom;
+
+                    if model.flip_h { w = -w; }
+                    if model.flip_v { h = -h; }
+
+                    let x = model.pan.x + x_center * model.zoom;
+                    let y = model.pan.y + y_center * model.zoom;
+
                     draw.texture(&n_texture)
-                        .x_y(
-                            model.pan.x + x_center * model.zoom,
-                            model.pan.y + y_center * model.zoom,
-                        )
-                        .w_h(
-                            tile.width as f32 * model.zoom,
-                            tile.height as f32 * model.zoom,
-                        );
+                        .x_y(x, y)
+                        .w_h(w, h)
+                        .rotate(model.rotate_deg.to_radians());
                 }
-                // Draw bottom info bar with full path, dimensions, and zoom
-                let bar_h = 20.0;
-                let bar_y = -rect.h() / 2.0 + bar_h / 2.0;
-                // Background
-                draw.rect()
-                    .x_y(0.0, bar_y)
-                    .w_h(rect.w(), bar_h)
-                    .color(srgba(0.0, 0.0, 0.0, 0.5));
-                // Full path, left-aligned
-                let full_path = model.image_paths[model.current].to_string_lossy();
-                draw.text(&full_path)
-                    .font_size(14)
-                    .color(WHITE)
-                    .w_h(rect.w(), bar_h)
-                    .x_y(0.0, bar_y)
-                    .left_justify();
-                // Dimensions and zoom, right-aligned
-                let info = format!("{}×{}  {:.2}×", full_w, full_h, model.zoom);
-                draw.text(&info)
-                    .font_size(14)
-                    .color(WHITE)
-                    .w_h(rect.w(), bar_h)
-                    .x_y(0.0, bar_y)
-                    .right_justify();
+                if model.show_info_bar {
+                    // Draw bottom info bar with full path, dimensions, and zoom
+                    let bar_h = 20.0;
+                    let bar_y = -rect.h() / 2.0 + bar_h / 2.0;
+                    // Background
+                    draw.rect()
+                        .x_y(0.0, bar_y)
+                        .w_h(rect.w(), bar_h)
+                        .color(srgba(0.141, 0.141, 0.141, 1.0));
+                    // Full path, left-aligned
+                    let full_path = model.image_paths[model.current].to_string_lossy();
+                    draw.text(&full_path)
+                        .font_size(14)
+                        .color(srgba(0.922, 0.859, 0.698, 1.0))
+                        .w_h(rect.w(), bar_h)
+                        .x_y(0.0, bar_y)
+                        .left_justify();
+                    // Dimensions and zoom, right-aligned
+                    let info = format!("{}×{}", full_w, full_h);
+                    draw.text(&info)
+                        .font_size(14)
+                        .color(srgba(0.922, 0.859, 0.698, 1.0))
+                        .w_h(rect.w(), bar_h)
+                        .x_y(0.0, bar_y)
+                        .right_justify();
+                }
             } else {
                 draw.text("Loading...")
                     .font_size(24)
-                    .color(WHITE)
+                    .color(srgba(0.922, 0.859, 0.698, 1.0))
                     .x_y(0.0, 0.0);
-                // Draw bottom info bar with full path, dimensions, and zoom
-                let bar_h = 20.0;
-                let bar_y = -rect.h() / 2.0 + bar_h / 2.0;
-                // Background
-                draw.rect()
-                    .x_y(0.0, bar_y)
-                    .w_h(rect.w(), bar_h)
-                    .color(srgba(0.0, 0.0, 0.0, 0.5));
-                // Full path, left-aligned
-                let full_path = model.image_paths[model.current].to_string_lossy();
-                draw.text(&full_path)
-                    .font_size(14)
-                    .color(WHITE)
-                    .w_h(rect.w(), bar_h)
-                    .x_y(0.0, bar_y)
-                    .left_justify();
+                if model.show_info_bar {
+                    // Draw bottom info bar with full path, dimensions, and zoom
+                    let bar_h = 20.0;
+                    let bar_y = -rect.h() / 2.0 + bar_h / 2.0;
+                    // Background
+                    draw.rect()
+                        .x_y(0.0, bar_y)
+                        .w_h(rect.w(), bar_h)
+                        .color(srgba(0.141, 0.141, 0.141, 1.0));
+                    // Full path, left-aligned
+                    let full_path = model.image_paths[model.current].to_string_lossy();
+                    draw.text(&full_path)
+                        .font_size(14)
+                        .color(srgba(0.922, 0.859, 0.698, 1.0))
+                        .w_h(rect.w(), bar_h)
+                        .x_y(0.0, bar_y)
+                        .left_justify();
+                }
             }
         }
     }
@@ -1906,13 +1811,13 @@ fn view(app: &App, model: &Model, frame: Frame) {
         draw.rect().x_y(0.0, bar_y).w_h(rect.w(), bar_h).color(bg);
         draw.text(&prompt)
             .font_size(16)
-            .color(WHITE)
+            .color(srgba(0.922, 0.859, 0.698, 1.0))
             .w_h(rect.w(), bar_h)
             .x_y(0.0, bar_y)
             .left_justify();
         draw.text(&status)
             .font_size(14)
-            .color(WHITE)
+            .color(srgba(0.922, 0.859, 0.698, 1.0))
             .w_h(rect.w(), bar_h)
             .x_y(0.0, bar_y)
             .right_justify();
@@ -1942,7 +1847,7 @@ fn view(app: &App, model: &Model, frame: Frame) {
                 .w_h(text_width, font_size as f32)
                 .x_y(0.0, y)
                 .left_justify()
-                .color(WHITE);
+                .color(srgba(0.922, 0.859, 0.698, 1.0));
             y -= font_size as f32 + line_spacing;
         }
     }
