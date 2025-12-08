@@ -478,7 +478,7 @@ fn model(app: &App) -> Model {
     // Create the window first, so textures can reference a focused window.
     let window_id = app
         .new_window()
-        .size(800, 600)
+        .size_pixels(1200, 1000)
         .title("sriv")
         .view(view)
         .key_pressed(key_pressed)
@@ -487,6 +487,11 @@ fn model(app: &App) -> Model {
         .mouse_pressed(mouse_pressed)
         .build()
         .unwrap();
+
+    if let Some(win) = app.window(window_id) {
+        win.set_outer_position_pixels(840, 400);
+    }
+
     // Initialize channels and state for full-resolution LRU cache.
     // Channel for requesting full-resolution images (by index)
     let (full_req_tx, full_req_rx) = unbounded::<usize>();
@@ -592,6 +597,7 @@ fn model(app: &App) -> Model {
         prev_window_rect: initial_rect,
         prev_scroll: 0.0,
         fit_mode: true,
+        numeric_prefix: None,
         rotate_deg: 0.0,
         flip_h: false,
         flip_v: false,
@@ -897,6 +903,13 @@ fn received_character(_app: &App, model: &mut Model, ch: char) {
     if ch.is_control() {
         return;
     }
+
+     if ch.is_ascii_digit() {
+        let digit = ch.to_digit(10).unwrap() as usize;
+        model.numeric_prefix = Some(model.numeric_prefix.unwrap_or(0) * 10 + digit);
+        return;
+    }
+
     match ch {
         '<' => {
             if let Mode::Single = model.mode {
@@ -954,6 +967,31 @@ fn key_pressed(app: &App, model: &mut Model, key: Key) {
             model.flip_v = !model.flip_v;
         }
         return;
+    }
+    if key == Key::G && !app.keys.mods.ctrl() && !app.keys.mods.alt() && !app.keys.mods.logo() {
+        if let Mode::Single = model.mode {
+            let len = model.image_paths.len();
+            if len == 0 {
+                model.numeric_prefix = None;
+                return;
+            }
+
+            if app.keys.mods.shift() {
+                // Shift+G → either numG or last
+                if let Some(n) = model.numeric_prefix.take() {
+                    let idx = n.saturating_sub(1).min(len.saturating_sub(1));
+                    navigate_to(app, model, idx);
+                } else {
+                    // plain G → last image
+                    navigate_to(app, model, len - 1);
+                }
+            } else {
+                // lowercase g → first image
+                model.numeric_prefix = None;
+                navigate_to(app, model, 0);
+            }
+            return; // we've handled the key
+        }
     }
     if app.keys.mods == ModifiersState::empty() {
         match key {

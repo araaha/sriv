@@ -270,6 +270,7 @@ pub struct ThumbnailUpdate {
 
 #[derive(Debug)]
 pub struct Model {
+    pub numeric_prefix: Option<usize>,
     pub image_paths: Vec<PathBuf>,
     pub thumb_visible: HashMap<usize, ThumbnailTexture>,
     pub thumb_data: HashMap<usize, ThumbnailEntry>,
