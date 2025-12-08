@@ -18,14 +18,30 @@ impl ThumbnailGrid {
     pub fn new(model: &Model, rect: Rect) -> Self {
         let thumb_size = model.thumb_size as f32;
         let cell = thumb_size + model.gap;
+
         let mut cols = ((rect.w() + model.gap) / cell).floor() as isize;
         if cols < 1 {
             cols = 1;
         }
         let cols = cols as usize;
+
         let total = model.image_paths.len();
         let rows = if cols == 0 { 0 } else { total.div_ceil(cols) };
         let half_gap = model.gap / 2.0;
+
+        // Total grid height in "cell" units
+        let grid_h = rows as f32 * cell;
+        let win_h = rect.h();
+
+        // If the grid is shorter than the window, offset its scroll so it is vertically centered.
+        // Otherwise, no offset (top-anchored with normal scrolling).
+        let base_scroll = if grid_h < win_h {
+            // This is the scroll value that would put the grid's center at y = 0
+            (grid_h - win_h) / 2.0  // note: negative number
+        } else {
+            0.0
+        };
+
         Self {
             rect,
             cell,
@@ -33,10 +49,12 @@ impl ThumbnailGrid {
             rows,
             half_gap,
             thumb_size,
-            scroll: model.scroll_offset,
+            // Effective scroll = user scroll + centering offset (when applicable)
+            scroll: model.scroll_offset + base_scroll,
             total,
         }
     }
+
 
     pub fn is_empty(&self) -> bool {
         self.total == 0 || self.cols == 0
@@ -153,6 +171,9 @@ impl ThumbnailGrid {
     }
 
     fn col_center_x(&self, col: usize) -> f32 {
-        -self.rect.w() / 2.0 + self.thumb_size / 2.0 + self.half_gap + (col as f32) * self.cell
+        let grid_w = self.cols as f32 * self.cell;
+        let left = -grid_w / 2.0 + self.cell / 2.0;
+        left + (col as f32) * self.cell
     }
+
 }
