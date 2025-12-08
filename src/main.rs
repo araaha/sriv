@@ -633,6 +633,11 @@ fn main() -> Result<()> {
 fn navigate_to(app: &App, model: &mut Model, new_idx: usize) {
     let len = model.image_paths.len();
     model.current = new_idx;
+
+    // reset flip/rotation
+    model.flip_h = false;
+    model.flip_v = false;
+    model.rotate_deg = 0.0;
     // Preload the target and its neighbors
     request_full_texture(model, new_idx);
     if new_idx > 0 {
@@ -656,6 +661,11 @@ fn focus_image(app: &App, model: &mut Model, idx: usize) {
     match model.mode {
         Mode::Single => navigate_to(app, model, idx),
         Mode::Thumbnails => {
+            // Reset flips and rotation when selecting a new image from thumbnails
+            model.flip_h = false;
+            model.flip_v = false;
+            model.rotate_deg = 0.0;
+
             model.current = idx;
             model.selection_changed_at = Instant::now();
             model.selection_pending = false;
@@ -1078,6 +1088,9 @@ fn key_pressed(app: &App, model: &mut Model, key: Key) {
                         if idx + 1 < len {
                             request_full_texture(model, idx + 1);
                         }
+                        model.flip_h = false;
+                        model.flip_v = false;
+                        model.rotate_deg = 0.0;
                         // Enter single mode and fit image to window
                         model.mode = Mode::Single;
                         apply_fit(app, model);
