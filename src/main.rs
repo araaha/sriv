@@ -351,7 +351,7 @@ fn model(app: &App) -> Model {
     image_paths.sort();
     let thumb_has_xmp = detect_thumb_sidecars(&image_paths);
     // Prepare thumbnail size, gap, and cache base directory.
-    let thumb_size: u32 = 256;
+    let thumb_size: u32 = 64;
     let cache_home = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
         .or_else(|| {
@@ -582,7 +582,7 @@ fn model(app: &App) -> Model {
         full_pending,
         full_textures,
         full_usage,
-        mode: Mode::Thumbnails,
+        mode: Mode::Single,
         current: 0,
         thumb_size,
         gap: 10.0,
@@ -591,7 +591,7 @@ fn model(app: &App) -> Model {
         pan: vec2(0.0, 0.0),
         prev_window_rect: initial_rect,
         prev_scroll: 0.0,
-        fit_mode: false,
+        fit_mode: true,
         rotate_deg: 0.0,
         flip_h: false,
         flip_v: false,
@@ -612,6 +612,7 @@ fn model(app: &App) -> Model {
         search: None,
         window_id,
     };
+    apply_fit(app, &mut model);
     update_thumbnail_requests(app, &mut model);
     model
 }
@@ -1063,13 +1064,6 @@ fn key_pressed(app: &App, model: &mut Model, key: Key) {
                         model.zoom = 1.0;
                     }
                     model.pan = vec2(0.0, 0.0);
-                }
-            }
-            // Toggle full screen
-            Key::F => {
-                if let Some(window) = app.window(model.window_id) {
-                    let is_fs = window.is_fullscreen();
-                    window.set_fullscreen(!is_fs);
                 }
             }
             Key::Minus => {
@@ -1557,9 +1551,20 @@ fn view(app: &App, model: &Model, frame: Frame) {
                         };
 
                         if let Some(slot) = model.thumb_visible.get(&i) {
-                            let [tw, th] = slot.size;
-                            let w = tw as f32;
-                            let h = th as f32;
+                            let tex_w = slot.size[0] as f32;
+                            let tex_h = slot.size[1] as f32;
+                            let max_dim = model.thumb_size as f32;
+
+                            // Scale to fit inside square cell while preserving aspect
+                            let aspect = tex_w / tex_h;
+                            let (w, h) = if aspect > 1.0 {
+                                // wide image → width = thumb_size
+                                (max_dim, max_dim / aspect)
+                            } else {
+                                // tall image → height = thumb_size
+                                (max_dim * aspect, max_dim)
+                            };
+
                             let lod_variation =
                                 1.0 + ((slot.generation % 1_000_000) as f32) / 1_000_000.0;
                             // nannou caches bind groups by (texture_id, sampler_desc); without the
@@ -1595,7 +1600,7 @@ fn view(app: &App, model: &Model, frame: Frame) {
                                     .w_h(icon_w, icon_h)
                                     .color(srgba(1.0, 0.0, 0.0, 0.85));
                                 draw.text("XMP")
-                                    .font_size(12)
+                                    .font_size(16)
                                     .w_h(icon_w, icon_h)
                                     .x_y(icon_center_x, icon_center_y - 1.0)
                                     .color(srgba(0.922, 0.859, 0.698, 1.0));
@@ -1629,16 +1634,17 @@ fn view(app: &App, model: &Model, frame: Frame) {
             }
             if model.show_info_bar {
                 // Bottom info bar in thumbnail mode: filename and index/total
-                let bar_h = 20.0;
+                let bar_h = 25.0;
+                let baseline_offset = -3.0;
                 let bar_y = -rect.h() / 2.0 + bar_h / 2.0;
                 // Background
                 draw.rect()
-                    .x_y(0.0, bar_y)
+                    .x_y(0.0, bar_y+baseline_offset)
                     .w_h(rect.w(), bar_h)
                     .color(srgba(0.141, 0.141, 0.141, 1.0));
                 let full_path = model.image_paths[model.current].to_string_lossy();
                 draw.text(&full_path)
-                    .font_size(14)
+                    .font_size(16)
                     .w_h(rect.w(), bar_h)
                     .x_y(0.0, bar_y)
                     .left_justify()
@@ -1646,7 +1652,7 @@ fn view(app: &App, model: &Model, frame: Frame) {
                 // Index of selected image
                 let count = format!("{}/{}", model.current + 1, model.image_paths.len());
                 draw.text(&count)
-                    .font_size(14)
+                    .font_size(16)
                     .w_h(rect.w(), bar_h)
                     .x_y(0.0, bar_y)
                     .right_justify()
@@ -1723,25 +1729,27 @@ fn view(app: &App, model: &Model, frame: Frame) {
                 }
                 if model.show_info_bar {
                     // Draw bottom info bar with full path, dimensions, and zoom
-                    let bar_h = 20.0;
+                    let bar_h = 25.0;
+                    let baseline_offset = -3.0;
                     let bar_y = -rect.h() / 2.0 + bar_h / 2.0;
                     // Background
                     draw.rect()
-                        .x_y(0.0, bar_y)
+                        .x_y(0.0, bar_y+baseline_offset)
                         .w_h(rect.w(), bar_h)
                         .color(srgba(0.141, 0.141, 0.141, 1.0));
                     // Full path, left-aligned
                     let full_path = model.image_paths[model.current].to_string_lossy();
                     draw.text(&full_path)
-                        .font_size(14)
+                        .font_size(16)
                         .color(srgba(0.922, 0.859, 0.698, 1.0))
                         .w_h(rect.w(), bar_h)
                         .x_y(0.0, bar_y)
                         .left_justify();
-                    // Dimensions and zoom, right-aligned
-                    let info = format!("{}×{}", full_w, full_h);
+                    let index_text = format!("{}/{}", model.current + 1, model.image_paths.len());
+                    let resolution_text = format!("{}×{}", full_w, full_h);
+                    let info = format!("{} {}", resolution_text, index_text);
                     draw.text(&info)
-                        .font_size(14)
+                        .font_size(16)
                         .color(srgba(0.922, 0.859, 0.698, 1.0))
                         .w_h(rect.w(), bar_h)
                         .x_y(0.0, bar_y)
@@ -1749,27 +1757,9 @@ fn view(app: &App, model: &Model, frame: Frame) {
                 }
             } else {
                 draw.text("Loading...")
-                    .font_size(24)
+                    .font_size(16)
                     .color(srgba(0.922, 0.859, 0.698, 1.0))
                     .x_y(0.0, 0.0);
-                if model.show_info_bar {
-                    // Draw bottom info bar with full path, dimensions, and zoom
-                    let bar_h = 20.0;
-                    let bar_y = -rect.h() / 2.0 + bar_h / 2.0;
-                    // Background
-                    draw.rect()
-                        .x_y(0.0, bar_y)
-                        .w_h(rect.w(), bar_h)
-                        .color(srgba(0.141, 0.141, 0.141, 1.0));
-                    // Full path, left-aligned
-                    let full_path = model.image_paths[model.current].to_string_lossy();
-                    draw.text(&full_path)
-                        .font_size(14)
-                        .color(srgba(0.922, 0.859, 0.698, 1.0))
-                        .w_h(rect.w(), bar_h)
-                        .x_y(0.0, bar_y)
-                        .left_justify();
-                }
             }
         }
     }
@@ -1816,7 +1806,7 @@ fn view(app: &App, model: &Model, frame: Frame) {
             .x_y(0.0, bar_y)
             .left_justify();
         draw.text(&status)
-            .font_size(14)
+            .font_size(16)
             .color(srgba(0.922, 0.859, 0.698, 1.0))
             .w_h(rect.w(), bar_h)
             .x_y(0.0, bar_y)
@@ -1843,7 +1833,7 @@ fn view(app: &App, model: &Model, frame: Frame) {
                 break;
             }
             draw.text(line)
-                .font_size(font_size)
+                .font_size(16)
                 .w_h(text_width, font_size as f32)
                 .x_y(0.0, y)
                 .left_justify()
