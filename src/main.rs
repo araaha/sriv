@@ -573,6 +573,8 @@ fn model(app: &App) -> Model {
         prev_window_rect: initial_rect,
         prev_scroll: 0.0,
         fit_mode: true,
+        fit_once: true,
+        stick_zoom: false,
         numeric_prefix: None,
         rotate_deg: 0.0,
         flip_h: false,
@@ -617,9 +619,14 @@ fn navigate_to(app: &App, model: &mut Model, new_idx: usize) {
     if new_idx + 1 < len {
         request_full_texture(model, new_idx + 1);
     }
-    // Apply fit if already loaded
-    if model.full_textures.contains_key(&new_idx) {
-        apply_fit(app, model);
+    let should_fit =
+        (model.fit_once) ||   // normal fit mode
+        (!model.stick_zoom && model.fit_mode);                          // first-image fit
+
+    if should_fit {
+        if model.full_textures.contains_key(&new_idx) {
+            apply_fit(app, model);
+        }
     }
 }
 
@@ -968,6 +975,9 @@ fn key_pressed(app: &App, model: &mut Model, key: Key) {
             Key::X => {
                 model.command_output = None;
             }
+            Key::A => {
+                model.stick_zoom = !model.stick_zoom;
+            }
             _ => {}
         }
     } else if app.keys.mods == ModifiersState::SHIFT && key == Key::G {
@@ -1066,8 +1076,14 @@ fn update(app: &App, model: &mut Model, _update: Update) {
                         model.full_textures.remove(&old_idx);
                     }
                 }
-                if idx == model.current && model.fit_mode {
-                    apply_fit(app, model);
+                if idx == model.current {
+                    let should_fit =
+                        model.fit_once ||
+                        (!model.stick_zoom && model.fit_mode);
+
+                    if should_fit {
+                        apply_fit(app, model);
+                    }
                 }
             }
             FullImageMessage::Failed { index: idx, error } => {
@@ -1320,6 +1336,7 @@ fn apply_fit(app: &App, model: &mut Model) {
         model.zoom = 1.0;
     }
     model.pan = vec2(0.0, 0.0);
+    model.fit_once = false;
 }
 
 fn view(app: &App, model: &Model, frame: Frame) {

@@ -297,6 +297,8 @@ pub struct Model {
     pub prev_scroll: f32,
     pub fit_mode: bool,
 
+    pub fit_once: bool,
+    pub stick_zoom: bool,
     pub rotate_deg: f32,
     pub flip_h: bool,
     pub flip_v: bool,
