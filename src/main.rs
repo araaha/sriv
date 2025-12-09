@@ -1546,12 +1546,7 @@ fn view(app: &App, model: &Model, frame: Frame) {
                         .x_y(0.0, bar_y)
                         .right_justify();
                 }
-            } else {
-                draw.text("Loading...")
-                    .font_size(16)
-                    .color(srgba(0.922, 0.859, 0.698, 1.0))
-                    .x_y(0.0, 0.0);
-            }
+            } 
         }
     }
 
