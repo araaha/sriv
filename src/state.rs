@@ -1,4 +1,3 @@
-use crate::clip::ClipEngine;
 use crate::FullImageMessage;
 use crossbeam_channel::{Receiver as CbReceiver, Sender as CbSender};
 use nannou::image::DynamicImage;
@@ -108,7 +107,7 @@ impl ThumbRequestQueue {
             .copied()
             .map(|idx| (idx, priority(idx)))
             .collect();
-        scored.sort_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        scored.sort_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap());
         state.order.clear();
         for (idx, _) in scored {
             state.order.push_back(idx);
@@ -128,6 +127,7 @@ fn parse_binding_spec(spec: &str, command: &str) -> Option<KeyBinding> {
     let mut alt = false;
     let mut super_key = false;
     let mut key_opt: Option<Key> = None;
+
     for part in spec.split('+').map(|s| s.trim()) {
         match part.to_lowercase().as_str() {
             "ctrl" | "control" => ctrl = true,
@@ -190,6 +190,7 @@ fn parse_binding_spec(spec: &str, command: &str) -> Option<KeyBinding> {
             }
         }
     }
+
     key_opt.map(|key| KeyBinding {
         key,
         ctrl,
@@ -212,18 +213,6 @@ pub fn parse_bindings(s: &str) -> Vec<KeyBinding> {
         }
     }
     bindings
-}
-
-#[derive(Debug)]
-pub struct SearchState {
-    pub input: String,
-    pub focused: bool,
-    pub skip_next_char: bool,
-    pub results: Vec<(usize, f32)>,
-    pub current: usize,
-    pub pending_request: Option<u64>,
-    pub error: Option<String>,
-    pub last_embedding: Option<Vec<f32>>,
 }
 
 #[derive(Debug)]
@@ -258,66 +247,12 @@ impl TiledTexture {
 #[derive(Debug)]
 pub struct ThumbnailEntry {
     pub image: DynamicImage,
-    pub clip_embedding: Option<Vec<f32>>,
 }
 
 #[derive(Debug)]
 pub struct ThumbnailUpdate {
     pub index: usize,
     pub image: DynamicImage,
-    pub clip_embedding: Option<Vec<f32>>,
-}
-
-#[derive(Debug)]
-pub struct Model {
-    pub numeric_prefix: Option<usize>,
-    pub image_paths: Vec<PathBuf>,
-    pub thumb_visible: HashMap<usize, ThumbnailTexture>,
-    pub thumb_data: HashMap<usize, ThumbnailEntry>,
-    pub thumb_has_xmp: Vec<bool>,
-    pub thumb_rx: Receiver<ThumbnailUpdate>,
-    pub thumb_queue: ThumbRequestQueue,
-    pub next_thumb_generation: u64,
-    pub file_mod_times: Vec<Option<SystemTime>>,
-    pub file_watch_cursor: usize,
-    pub full_req_tx: CbSender<usize>,
-    pub full_resp_rx: CbReceiver<FullImageMessage>,
-    pub full_pending: HashMap<usize, FullPendingState>,
-    pub full_textures: HashMap<usize, TiledTexture>,
-    pub full_usage: VecDeque<usize>,
-    pub mode: Mode,
-    pub current: usize,
-    pub thumb_size: u32,
-    pub gap: f32,
-    pub scroll_offset: f32,
-    pub zoom: f32,
-    pub pan: Vec2,
-    pub prev_window_rect: Rect,
-    pub prev_scroll: f32,
-    pub fit_mode: bool,
-    pub rotate_deg: f32,
-    pub flip_h: bool,
-    pub flip_v: bool,
-    pub show_info_bar: bool,
-    pub selection_changed_at: Instant,
-    pub selection_pending: bool,
-    pub key_bindings: Vec<KeyBinding>,
-    pub command_tx: Sender<String>,
-    pub command_rx: Receiver<String>,
-    pub command_output: Option<String>,
-    pub clip_engine: ClipEngine,
-    pub clip_missing: HashSet<usize>,
-    pub clip_inflight: HashSet<usize>,
-    pub pending_clip_embeddings: HashMap<usize, Vec<f32>>,
-    pub next_search_request_id: u64,
-    pub search: Option<SearchState>,
-    pub window_id: WindowId,
-}
-
-impl Drop for Model {
-    fn drop(&mut self) {
-        self.thumb_queue.close();
-    }
 }
 
 #[derive(Debug)]
@@ -327,3 +262,60 @@ pub struct ThumbnailTexture {
     pub size: [u32; 2],
     pub generation: u64,
 }
+
+#[derive(Debug)]
+pub struct Model {
+    pub numeric_prefix: Option<usize>,
+    pub image_paths: Vec<PathBuf>,
+
+    pub thumb_visible: HashMap<usize, ThumbnailTexture>,
+    pub thumb_data: HashMap<usize, ThumbnailEntry>,
+    pub thumb_has_xmp: Vec<bool>,
+    pub thumb_rx: Receiver<ThumbnailUpdate>,
+    pub thumb_queue: ThumbRequestQueue,
+    pub next_thumb_generation: u64,
+
+    pub file_mod_times: Vec<Option<SystemTime>>,
+    pub file_watch_cursor: usize,
+
+    pub full_req_tx: CbSender<usize>,
+    pub full_resp_rx: CbReceiver<FullImageMessage>,
+    pub full_pending: HashMap<usize, FullPendingState>,
+    pub full_textures: HashMap<usize, TiledTexture>,
+    pub full_usage: VecDeque<usize>,
+
+    pub mode: Mode,
+    pub current: usize,
+
+    pub thumb_size: u32,
+    pub gap: f32,
+    pub scroll_offset: f32,
+
+    pub zoom: f32,
+    pub pan: Vec2,
+    pub prev_window_rect: Rect,
+    pub prev_scroll: f32,
+    pub fit_mode: bool,
+
+    pub rotate_deg: f32,
+    pub flip_h: bool,
+    pub flip_v: bool,
+    pub show_info_bar: bool,
+
+    pub selection_changed_at: Instant,
+    pub selection_pending: bool,
+
+    pub key_bindings: Vec<KeyBinding>,
+    pub command_tx: Sender<String>,
+    pub command_rx: Receiver<String>,
+    pub command_output: Option<String>,
+
+    pub window_id: WindowId,
+}
+
+impl Drop for Model {
+    fn drop(&mut self) {
+        self.thumb_queue.close();
+    }
+}
+
