@@ -422,7 +422,7 @@ fn model(app: &App) -> Model {
                                 let w = w0.max(2);
                                 let h = h0.max(2);
                                 if w != w0 || h != h0 {
-                                    thumb = thumb.resize_exact(w, h, FilterType::Nearest);
+                                    thumb = thumb.resize_exact(w, h, FilterType::Lanczos3);
                                 }
                                 if let Some(parent) = cache_path.parent() {
                                     let _ = fs::create_dir_all(parent);
@@ -621,28 +621,6 @@ fn navigate_to(app: &App, model: &mut Model, new_idx: usize) {
     // Apply fit if already loaded
     if model.full_textures.contains_key(&new_idx) {
         apply_fit(app, model);
-    }
-}
-
-fn focus_image(app: &App, model: &mut Model, idx: usize) {
-    let len = model.image_paths.len();
-    if len == 0 {
-        return;
-    }
-    let idx = idx.min(len - 1);
-    match model.mode {
-        Mode::Single => navigate_to(app, model, idx),
-        Mode::Thumbnails => {
-            // Reset flips and rotation when selecting a new image from thumbnails
-            model.flip_h = false;
-            model.flip_v = false;
-            model.rotate_deg = 0.0;
-
-            model.current = idx;
-            model.selection_changed_at = Instant::now();
-            model.selection_pending = false;
-            ensure_thumbnail_visible(app, model, idx);
-        }
     }
 }
 
