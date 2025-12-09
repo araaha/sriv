@@ -100,6 +100,19 @@ fn mouse_pressed(app: &App, model: &mut Model, button: MouseButton) {
     }
 }
 
+fn should_fit_image(model: &Model) -> bool {
+    if !model.fit_mode {
+        return false;
+    }
+
+    if model.sticky_zoom && model.user_zoomed {
+        return false; // sticky zoom > preserve zoom after user zooms
+    }
+
+    true // otherwise fit
+}
+
+
 /// Mouse wheel scroll handler to scroll thumbnails in thumbnail view.
 fn mouse_wheel(app: &App, model: &mut Model, delta: MouseScrollDelta, _phase: TouchPhase) {
     match model.mode {
@@ -119,6 +132,7 @@ fn mouse_wheel(app: &App, model: &mut Model, delta: MouseScrollDelta, _phase: To
         }
         Mode::Single => {
             // Zoom in/out around mouse cursor
+            model.user_zoomed = true;
             let mouse_pos = app.mouse.position();
             let old_zoom = model.zoom;
             // Determine zoom factor from scroll delta
@@ -573,8 +587,8 @@ fn model(app: &App) -> Model {
         prev_window_rect: initial_rect,
         prev_scroll: 0.0,
         fit_mode: true,
-        fit_once: true,
-        stick_zoom: false,
+        user_zoomed: false,
+        sticky_zoom: true,
         numeric_prefix: None,
         rotate_deg: 0.0,
         flip_h: false,
@@ -619,15 +633,10 @@ fn navigate_to(app: &App, model: &mut Model, new_idx: usize) {
     if new_idx + 1 < len {
         request_full_texture(model, new_idx + 1);
     }
-    let should_fit =
-        (model.fit_once) ||   // normal fit mode
-        (!model.stick_zoom && model.fit_mode);                          // first-image fit
-
-    if should_fit {
-        if model.full_textures.contains_key(&new_idx) {
-            apply_fit(app, model);
-        }
+    if should_fit_image(model) && model.full_textures.contains_key(&new_idx) {
+        apply_fit(app, model);
     }
+
 }
 
 fn ensure_thumbnail_visible(app: &App, model: &mut Model, idx: usize) {
@@ -809,6 +818,7 @@ fn key_pressed(app: &App, model: &mut Model, key: Key) {
     if app.keys.mods.shift() && key == Key::W {
         if let Mode::Single = model.mode {
             apply_fit(app, model);
+            model.user_zoomed = false;
         }
         return;
     }
@@ -940,22 +950,6 @@ fn key_pressed(app: &App, model: &mut Model, key: Key) {
                     }
                 }
             }
-            Key::W => {
-                if let Mode::Single = model.mode {
-                    if let Some(rect) = current_window_rect(app, model) {
-                        if let Some(tex) = model.full_textures.get(&model.current) {
-                            let [w, h] = tex.size();
-                            let fit = (rect.w() / w as f32).min(rect.h() / h as f32);
-                            model.zoom = fit;
-                        } else {
-                            model.zoom = 1.0;
-                        }
-                    } else {
-                        model.zoom = 1.0;
-                    }
-                    model.pan = vec2(0.0, 0.0);
-                }
-            }
             Key::Minus => {
                 if let Mode::Single = model.mode {
                     let old_zoom = model.zoom;
@@ -963,6 +957,7 @@ fn key_pressed(app: &App, model: &mut Model, key: Key) {
                     model.pan = model.pan * (new_zoom / old_zoom);
                     model.zoom = new_zoom;
                 }
+                model.user_zoomed = true;
             }
             Key::Equals => {
                 if let Mode::Single = model.mode {
@@ -971,12 +966,13 @@ fn key_pressed(app: &App, model: &mut Model, key: Key) {
                     model.pan = model.pan * (new_zoom / old_zoom);
                     model.zoom = new_zoom;
                 }
+                model.user_zoomed = true;
             }
             Key::X => {
                 model.command_output = None;
             }
             Key::A => {
-                model.stick_zoom = !model.stick_zoom;
+                model.sticky_zoom = !model.sticky_zoom;
             }
             _ => {}
         }
@@ -1077,14 +1073,11 @@ fn update(app: &App, model: &mut Model, _update: Update) {
                     }
                 }
                 if idx == model.current {
-                    let should_fit =
-                        model.fit_once ||
-                        (!model.stick_zoom && model.fit_mode);
-
-                    if should_fit {
+                    if should_fit_image(model) {
                         apply_fit(app, model);
                     }
                 }
+
             }
             FullImageMessage::Failed { index: idx, error } => {
                 model.full_pending.insert(
@@ -1112,7 +1105,7 @@ fn update(app: &App, model: &mut Model, _update: Update) {
         if rect != model.prev_window_rect {
             model.prev_window_rect = rect;
             if let Mode::Single = model.mode {
-                if model.fit_mode {
+                if should_fit_image(model) {
                     apply_fit(app, model);
                 }
             }
@@ -1336,7 +1329,6 @@ fn apply_fit(app: &App, model: &mut Model) {
         model.zoom = 1.0;
     }
     model.pan = vec2(0.0, 0.0);
-    model.fit_once = false;
 }
 
 fn view(app: &App, model: &Model, frame: Frame) {
