@@ -352,7 +352,6 @@ fn model(app: &App) -> Model {
         eprintln!("No image files found in arguments.");
         std::process::exit(1);
     }
-    image_paths.sort();
     let thumb_has_xmp = detect_thumb_sidecars(&image_paths);
     // Prepare thumbnail size, gap, and cache base directory.
     let thumb_size: u32 = 64;
