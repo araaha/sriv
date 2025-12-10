@@ -1571,11 +1571,6 @@ fn view(app: &App, model: &Model, frame: Frame) {
                         .x_y(0.0, bar_y)
                         .right_justify();
                 }
-            } else {
-                draw.text("999999999")
-                    .font_size(24)
-                    .color(RED)
-                    .x_y(0.0, 0.0);
             }
         }
     }
