@@ -478,10 +478,6 @@ fn model(app: &App) -> Model {
         .build()
         .unwrap();
 
-    if let Some(win) = app.window(window_id) {
-        win.set_outer_position_pixels(840, 400);
-    }
-
     // Initialize channels and state for full-resolution LRU cache.
     // Channel for requesting full-resolution images (by index)
     let (full_req_tx, full_req_rx) = unbounded::<usize>();
@@ -638,6 +634,28 @@ fn navigate_to(app: &App, model: &mut Model, new_idx: usize) {
     }
 
 }
+
+fn clamp_pan_to_image(model: &mut Model, rect: Rect, tex_w: f32, tex_h: f32) {
+    let disp_w = tex_w * model.zoom;
+    let disp_h = tex_h * model.zoom;
+
+    // X-axis
+    if disp_w <= rect.w() {
+        model.pan.x = 0.0; // fits horizontally → center
+    } else {
+        let max_x = (disp_w - rect.w()) / 2.0;
+        model.pan.x = model.pan.x.clamp(-max_x, max_x);
+    }
+
+    // Y-axis
+    if disp_h <= rect.h() {
+        model.pan.y = 0.0; // fits vertically → center
+    } else {
+        let max_y = (disp_h - rect.h()) / 2.0;
+        model.pan.y = model.pan.y.clamp(-max_y, max_y);
+    }
+}
+
 
 fn ensure_thumbnail_visible(app: &App, model: &mut Model, idx: usize) {
     if !matches!(model.mode, Mode::Thumbnails) {
@@ -956,6 +974,13 @@ fn key_pressed(app: &App, model: &mut Model, key: Key) {
                     let new_zoom = (old_zoom * 0.9).clamp(0.01, 100.0);
                     model.pan = model.pan * (new_zoom / old_zoom);
                     model.zoom = new_zoom;
+
+                    if let Some(tex) = model.full_textures.get(&model.current) {
+                        let [tw, th] = tex.size();
+                        if let Some(rect) = current_window_rect(app, model) {
+                            clamp_pan_to_image(model, rect, tw as f32, th as f32);
+                        }
+                    }
                 }
                 model.user_zoomed = true;
             }
@@ -1546,7 +1571,12 @@ fn view(app: &App, model: &Model, frame: Frame) {
                         .x_y(0.0, bar_y)
                         .right_justify();
                 }
-            } 
+            } else {
+                draw.text("999999999")
+                    .font_size(24)
+                    .color(RED)
+                    .x_y(0.0, 0.0);
+            }
         }
     }
 
